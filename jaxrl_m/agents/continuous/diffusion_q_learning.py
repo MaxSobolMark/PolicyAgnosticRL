@@ -45,7 +45,7 @@ class DiffusionQLearningAgent(SACAgent):
         original_batch_size = batch["actions"].shape[0]
 
         # Repeat the batch cql_n_actions times
-        batch = jax.tree.map(
+        batch = jax.tree_map(
             lambda x: jnp.repeat(x, self.config["cql_n_actions"], axis=0), batch
         )
 

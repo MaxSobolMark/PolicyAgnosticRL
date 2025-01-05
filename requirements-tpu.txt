@@ -1,20 +1,20 @@
 gym == 0.23.1
-numpy < 2
-jax[tpu]==0.4.35
+numpy == 1.24.2
+jax[tpu]==0.4.24
 -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 distrax==0.1.5
-flax==0.10.2
+flax==0.8.0
 ml_collections >= 0.1.0
 tqdm >= 4.60.0
-chex==0.1.87
-optax==0.2.4
-orbax-checkpoint==0.10.1
+chex==0.1.86
+optax==0.2.2
+orbax-checkpoint==0.4.4
 absl-py >= 0.12.0
 scipy >= 1.6.0
 wandb >= 0.12.14
 plotly
-tensorflow == 2.18
-tensorflow-probability[tf] == 0.25.0
+tensorflow == 2.15
+tensorflow-probability[tf] == 0.23.0
 einops >= 0.6.1
 imageio >= 2.31.1
 moviepy >= 1.0.3

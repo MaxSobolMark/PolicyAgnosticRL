@@ -107,7 +107,7 @@ def pad_shard_unpad(wrapped, static_argnums=(0,), static_argnames=()):
             # Transfer back before cutting, to reduce on-device shape diversity.
             return einops.rearrange(jax.device_get(x), "d b ... -> (d b) ...")[:b]
 
-        return jax.tree.map(unpad, out)
+        return jax.tree_map(unpad, out)
 
     return pad_shard_unpad_wrapper
 
@@ -270,10 +270,10 @@ def accumulate_gradient(loss_and_grad_fn, params, images, labels, accum_steps):
             )
             li, gi = loss_and_grad_fn(params, imgs, lbls)
             l, g = l_and_g
-            return (l + li, jax.tree.map(lambda x, y: x + y, g, gi))
+            return (l + li, jax.tree_map(lambda x, y: x + y, g, gi))
 
         l, g = jax.lax.fori_loop(1, accum_steps, acc_grad_and_loss, (l, g))
-        return jax.tree.map(lambda x: x / accum_steps, (l, g))
+        return jax.tree_map(lambda x: x / accum_steps, (l, g))
     else:
         return loss_and_grad_fn(params, images, labels)
 
@@ -474,7 +474,7 @@ def _traverse_with_names(tree, with_inner_nodes=False):
         tree = flax.serialization.to_state_dict(tree)
     # Don't output the non-leaf nodes. If the optimizer doesn't have a state
     # the tree leaves can be Nones which was interpreted as a leaf by this
-    # function but not by the other functions (like jax.tree.map).
+    # function but not by the other functions (like jax.tree_map).
     if tree is None:
         return
     elif isinstance(tree, Mapping):
@@ -524,7 +524,7 @@ def tree_flatten_with_names(tree):
 
 
 def tree_map_with_names(f, tree, *rest):
-    """Like jax.tree.map but with a filter on the leaf path name.
+    """Like jax.tree_map but with a filter on the leaf path name.
 
     Args:
       f: A function with first parameter `name` (path-like "a/b/c") and remaining
@@ -859,7 +859,7 @@ def make_mask_trees(tree, patterns, *, log=None):
 
     multimask = tree_map_with_names(matchfirst, tree)
     return [
-        jax.tree.map(lambda matches, i=idx: matches[i], multimask)
+        jax.tree_map(lambda matches, i=idx: matches[i], multimask)
         for idx in range(len(patterns))
     ]
 

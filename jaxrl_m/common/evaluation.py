@@ -136,8 +136,8 @@ def evaluate_with_trajectories_vectorized(
         log_progress = False
         for i in range(num_envs):
             if episode_counts[i] < num_episodes // num_envs:
-                obs = jax.tree.map(lambda x: x[i], observations)
-                next_obs = jax.tree.map(lambda x: x[i], next_observations)
+                obs = jax.tree_map(lambda x: x[i], observations)
+                next_obs = jax.tree_map(lambda x: x[i], next_observations)
                 transition = dict(
                     observation=obs,
                     next_observation=next_obs,

@@ -144,7 +144,7 @@ def add_empty_observation_history_axis_to_batch(batch: Batch) -> Batch:
     """
     for key in ["observations", "next_observations", "actions"]:
         # First dimension is batch size, second dimension is chunking dimension
-        batch[key] = jax.tree.map(lambda x: x[:, None], batch[key])
+        batch[key] = jax.tree_map(lambda x: x[:, None], batch[key])
     return batch
 
 
@@ -159,7 +159,7 @@ def unbatch_observation_history_axis(batch: Batch) -> Batch:
         Batch without observation history axis.
     """
     for key in ["observations", "next_observations", "actions"]:
-        batch[key] = jax.tree.map(lambda x: x[:, 0], batch[key])
+        batch[key] = jax.tree_map(lambda x: x[:, 0], batch[key])
     return batch
 
 
@@ -360,9 +360,9 @@ def get_policy_fn(
             # Get samples from the base policy, put them in the observation dict
 
             if obs_ndim == 2:
-                batched_observations = jax.tree.map(lambda x: x[:, None], observations)
+                batched_observations = jax.tree_map(lambda x: x[:, None], observations)
             elif obs_ndim == 1:
-                batched_observations = jax.tree.map(
+                batched_observations = jax.tree_map(
                     lambda x: x[None, None], observations
                 )
             observations["base_policy_actions"] = base_policy.sample_actions(
@@ -376,9 +376,9 @@ def get_policy_fn(
         if "ddpm" in FLAGS.config.agent:
 
             if obs_ndim == 2:
-                observations = jax.tree.map(lambda x: x[:, None], observations)
+                observations = jax.tree_map(lambda x: x[:, None], observations)
             elif obs_ndim == 1:
-                observations = jax.tree.map(lambda x: x[None, None], observations)
+                observations = jax.tree_map(lambda x: x[None, None], observations)
         actions = jax.device_get(
             agent.sample_actions(
                 observations, *args, **kwargs, argmax=argmax, timer=timer
@@ -827,7 +827,7 @@ def train_agent(_):
     # The transformer agent handles this internally.
     # if not is_transformer_agent:
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    # agent = jax.device_put(jax.tree.map(jnp.array, agent), sharding.replicate())
+    # agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
     # agent = jax.device_put(agent, sharding.replicate())
     agent.to_device(sharding)
     if base_policy_agent is not None:
@@ -1278,17 +1278,17 @@ def train_agent(_):
                 if hasattr(agent, "forward_critic"):
                     timer.tick("q-mc calculation")
                     initial_states = [t["observation"][0] for t in trajectories]
-                    initial_states = jax.tree.map(
+                    initial_states = jax.tree_map(
                         lambda *x: jnp.stack(x), *initial_states
                     )
                     initial_actions = [t["action"][0] for t in trajectories]
-                    initial_actions = jax.tree.map(
+                    initial_actions = jax.tree_map(
                         lambda *x: jnp.stack(x), *initial_actions
                     )
                     initial_qs = agent.forward_critic(
                         initial_states, initial_actions, rng=None, train=False
                     ).mean(axis=0)
-                    mc_returns = jax.tree.map(
+                    mc_returns = jax.tree_map(
                         lambda t: calc_return_to_go(
                             rewards=np.array(t["reward"]) * FLAGS.reward_scale
                             + FLAGS.reward_bias,
@@ -1303,7 +1303,7 @@ def train_agent(_):
                             x, dict
                         ),  # only map over traj in trajs
                     )
-                    initial_mc_returns = jax.tree.map(lambda t: t[0], mc_returns)
+                    initial_mc_returns = jax.tree_map(lambda t: t[0], mc_returns)
 
                     timer.tock("q-mc calculation")
                     timer.tick("q_values_over_trajectory")

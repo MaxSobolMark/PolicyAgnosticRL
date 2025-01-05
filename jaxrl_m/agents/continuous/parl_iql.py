@@ -132,7 +132,7 @@ class PARLIQLAgent:
             key = "proprio" if "proprio" in observations else "state"
             if len(observations[key].shape) == 1:
                 need_to_unbatch = True
-                observations = jax.tree.map(
+                observations = jax.tree_map(
                     lambda x: jnp.expand_dims(x, 0), observations
                 )
             else:
@@ -174,7 +174,7 @@ class PARLIQLAgent:
 
     def to_device(self, sharding: jax.sharding.Sharding):
         self.state = jax.device_put(
-            jax.tree.map(jnp.array, self.state), sharding.replicate()
+            jax.tree_map(jnp.array, self.state), sharding.replicate()
         )
 
     def restore_checkpoint(self, path: str) -> "PARLIQLAgent":
