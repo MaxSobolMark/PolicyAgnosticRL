@@ -1,7 +1,6 @@
 """Script for offline to online RL."""
 
 import os
-import shutil
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -24,6 +23,7 @@ from jaxrl_m.agents.continuous.action_optimization import (
     LocalOptimizationState,
     action_optimization_sample_actions,
     add_base_policy_actions_to_batch,
+    local_optimization_steps as take_local_optimization_steps,
 )
 from jaxrl_m.agents.continuous.auto_regressive_transformer import (
     AutoRegressiveTransformerAgent,
@@ -31,7 +31,7 @@ from jaxrl_m.agents.continuous.auto_regressive_transformer import (
 from jaxrl_m.agents.continuous.base_policy import BasePolicy, BasePolicyTypes
 from jaxrl_m.agents.continuous.ddpm_bc import DDPMBCAgent
 from jaxrl_m.agents.continuous.openvla import OpenVLAAgent
-from jaxrl_m.common.common import shard_batch
+from jaxrl_m.common.common import JaxRLTrainState, shard_batch
 from jaxrl_m.common.evaluation import evaluate_with_trajectories_vectorized, supply_rng
 from jaxrl_m.common.traj import TrajSampler, calc_return_to_go
 from jaxrl_m.common.typing import Batch, Data
@@ -249,16 +249,18 @@ def preprocess_batch_with_action_optimization(
     else:
         if isinstance(observations, dict) and "ddpm_actions" in observations:
             observations = observations["state"]
-        local_optimization_results: LocalOptimizationState = local_optimization_steps(
-            observations,
-            batch["actions"],
-            critic=critic_agent,
-            critic_state=critic_agent.state,
-            max_num_steps=local_optimization_steps,
-            step_size=local_optimization_step_size,
-            optimize_critic_ensemble_min=optimize_critic_ensemble_min,
-            action_space_low=action_space_low,
-            action_space_high=action_space_high,
+        local_optimization_results: LocalOptimizationState = (
+            take_local_optimization_steps(
+                observations,
+                batch["actions"],
+                critic=critic_agent,
+                critic_state=critic_agent.state,
+                num_steps=local_optimization_steps,
+                step_size=local_optimization_step_size,
+                optimize_critic_ensemble_min=optimize_critic_ensemble_min,
+                action_space_low=action_space_low,
+                action_space_high=action_space_high,
+            )
         )
         batch["actions"] = local_optimization_results.actions
     batch = add_empty_observation_history_axis_to_batch(batch)
@@ -414,6 +416,17 @@ def set_batch_masks(
 def resize_images_to_100x100(images):
     batch_size = images.shape[0]
     return jax.image.resize(images, (batch_size, 100, 100, 3), method="cubic")
+
+
+def restart_agent_optimizer_state(agent):
+    assert hasattr(agent, "state") and isinstance(agent.state, JaxRLTrainState)
+    agent.state = agent.state.replace(
+        opt_states=JaxRLTrainState._tx_tree_map(
+            lambda tx: tx.init(agent.state.params), agent.state.txs
+        ),
+        step=0,
+    )
+    return agent
 
 
 def plot_q_values_over_trajectory_time_step(
@@ -886,6 +899,7 @@ def train_agent(_):
             num_trajectories_to_collect = FLAGS.num_online_trajectories_per_epoch
             if i == FLAGS.num_offline_epochs:
                 logging.info("Switching to online training...")
+                agent = restart_agent_optimizer_state(agent)
                 data_collection_rng_key, rng = jax.random.split(rng)
                 env_data_collection_policy_fn = get_policy_fn(
                     agent=agent,
