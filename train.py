@@ -531,6 +531,7 @@ def train_agent(_):
 
     # Create environment and dataset
     action_space = None
+    offline_dataset_size = None
     if FLAGS.environment_name == "real_robot":
         assert FLAGS.reward_bias == -1.0
         assert FLAGS.reward_scale == 1.0
@@ -689,6 +690,7 @@ def train_agent(_):
         dataset.dataset_dict["actions"] = np.clip(
             dataset.dataset_dict["actions"], -FLAGS.clip_action, FLAGS.clip_action
         )
+        offline_dataset_size = len(dataset)
 
     if action_space is None:
         action_space = train_env.action_space
@@ -915,12 +917,6 @@ def train_agent(_):
                         FLAGS.config.agent_kwargs.batch_size * FLAGS.config.mixing_ratio
                     )
                 )
-                offline_train_iterator_for_base_policy = dataset.iterator(
-                    batch_size=int(
-                        FLAGS.config.base_policy_agent_kwargs.batch_size
-                        * FLAGS.config.mixing_ratio
-                    )
-                )
                 if not FLAGS.config.image_observations:
                     online_train_iterator_for_critic = state_replay_buffer.iterator(
                         batch_size=FLAGS.config.batch_size
@@ -929,15 +925,14 @@ def train_agent(_):
                             * FLAGS.config.mixing_ratio
                         )
                     )
-                    online_train_iterator_for_base_policy = (
-                        state_replay_buffer.iterator(
+                    if offline_dataset_size is None:
+                        online_train_iterator_for_base_policy = state_replay_buffer.iterator(
                             batch_size=FLAGS.config.base_policy_agent_kwargs.batch_size
                             - int(
                                 FLAGS.config.base_policy_agent_kwargs.batch_size
                                 * FLAGS.config.mixing_ratio
                             )
                         )
-                    )
 
                 num_trajectories_to_collect = FLAGS.num_warmup_trajectories
 
@@ -1027,6 +1022,24 @@ def train_agent(_):
             and i >= FLAGS.num_offline_epochs
             and FLAGS.num_online_epochs > 0
         ):
+            if offline_dataset_size is not None:
+                # The ratio of offline to online data changes after every epoch, so we need to
+                # update the iterator.
+                total_data_size = offline_dataset_size + online_env_steps
+                offline_train_iterator_for_base_policy = dataset.iterator(
+                    batch_size=int(
+                        (offline_dataset_size / total_data_size)
+                        * FLAGS.config.base_policy_agent_kwargs.batch_size
+                    )
+                )
+
+                online_train_iterator_for_base_policy = state_replay_buffer.iterator(
+                    batch_size=FLAGS.config.base_policy_agent_kwargs.batch_size
+                    - int(
+                        (offline_dataset_size / total_data_size)
+                        * FLAGS.config.base_policy_agent_kwargs.batch_size
+                    )
+                )
             num_base_policy_distillation_steps = int(
                 online_env_steps_this_epoch * FLAGS.base_policy_utd
             )
@@ -1041,7 +1054,6 @@ def train_agent(_):
             ):
                 timer.tick("base_policy_distillation/get_batch")
                 if FLAGS.config.mixing_ratio > 0:
-                    offline_batch = None
                     offline_batch = next(offline_train_iterator_for_base_policy)
                 else:
                     offline_batch = None
@@ -1455,7 +1467,9 @@ def train_agent(_):
             )
             wandb_logger.log({"timer/average_times": timer.get_average_times()}, step=i)
 
-        if FLAGS.train_on_separate_computer_mode != "single_computer":
+        if FLAGS.train_on_separate_computer_mode == "single_computer":
+            online_env_steps_this_epoch = 0
+        else:
             # Wait until peer is done with their part.
             if FLAGS.train_on_separate_computer_mode == "env_steps_only":
                 # Save steps_elapsed to a file.
