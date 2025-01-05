@@ -194,7 +194,7 @@ class DDPMBCAgent(BasePolicy):
             # unbatched input from evaluation
             batch_size = 1
             need_to_unbatch = True
-            observations = jax.tree.map(lambda x: x[None], observations)
+            observations = jax.tree_map(lambda x: x[None], observations)
         else:
             batch_size = observations[obs_key].shape[0]
             need_to_unbatch = False
@@ -211,7 +211,7 @@ class DDPMBCAgent(BasePolicy):
                 "proprio": observations["proprio"],
             }
 
-        observations = jax.tree.map(
+        observations = jax.tree_map(
             lambda x: jnp.repeat(x, repeat, axis=1).reshape(
                 batch_size * repeat, 1, *x.shape[2:]
             ),
@@ -450,5 +450,5 @@ class DDPMBCAgent(BasePolicy):
 
     def to_device(self, sharding: jax.sharding.Sharding):
         self.state = jax.device_put(
-            jax.tree.map(jnp.array, self.state), sharding.replicate()
+            jax.tree_map(jnp.array, self.state), sharding.replicate()
         )

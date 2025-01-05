@@ -336,7 +336,7 @@ def action_optimization_sample_actions(
         if len(observations["state"].shape) == 1:
             observations["state"] = observations["state"][None]
 
-    repeated_critic_observations = jax.tree.map(
+    repeated_critic_observations = jax.tree_map(
         lambda x: x[:, None]
         .repeat(num_base_policy_actions, axis=1)
         .reshape(batch_size * num_base_policy_actions, *x.shape[1:]),
@@ -373,7 +373,7 @@ def action_optimization_sample_actions(
         base_policy_actions = base_policy_actions.reshape(
             batch_size, num_base_policy_actions, base_policy_actions.shape[-1]
         )
-        repeated_critic_observations = jax.tree.map(
+        repeated_critic_observations = jax.tree_map(
             lambda x: x.reshape(
                 batch_size,
                 num_base_policy_actions,
@@ -389,7 +389,7 @@ def action_optimization_sample_actions(
         # top_k_indices needs to have the same number of dimensions as repeated_observations
         # for every key. Thus, for every key, we maintain the 2 existing dimensions, and add
         # None for every other dimension.
-        repeated_critic_observations = jax.tree.map(
+        repeated_critic_observations = jax.tree_map(
             lambda x: jnp.take_along_axis(
                 x,
                 top_k_indices[
@@ -410,7 +410,7 @@ def action_optimization_sample_actions(
             batch_size * num_actions_to_keep,
             base_policy_actions.shape[-1],
         )
-        repeated_critic_observations = jax.tree.map(
+        repeated_critic_observations = jax.tree_map(
             lambda x: x.reshape(
                 batch_size * num_actions_to_keep,
                 *x.shape[2:],
@@ -574,7 +574,7 @@ def add_base_policy_actions_to_batch(
         batch[observation_key]["base_policy_actions"] = (
             base_policy_agent.sample_actions(
                 # Add empty observation history axis
-                jax.tree.map(lambda x: x[:, None], batch[observation_key]),
+                jax.tree_map(lambda x: x[:, None], batch[observation_key]),
                 repeat=num_base_policy_actions,
                 cache_dir=cache_dir,
                 timer=timer,

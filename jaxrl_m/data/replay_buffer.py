@@ -100,7 +100,7 @@ class ReplayBuffer(Dataset):
         self._size = min(self._size + batch_size, self._capacity)
 
     def save(self, path: str):
-        dict_to_save = jax.tree.map(lambda x: x[: self._size], self.dataset_dict)
+        dict_to_save = jax.tree_map(lambda x: x[: self._size], self.dataset_dict)
         path = os.path.join(path, "replay_buffer.npz")
         if tf.io.gfile.exists(path):
             tf.io.gfile.remove(path)

@@ -1,7 +1,6 @@
 """Script for offline to online RL."""
 
 import os
-import shutil
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -24,6 +23,7 @@ from jaxrl_m.agents.continuous.action_optimization import (
     LocalOptimizationState,
     action_optimization_sample_actions,
     add_base_policy_actions_to_batch,
+    local_optimization_steps as take_local_optimization_steps,
 )
 from jaxrl_m.agents.continuous.auto_regressive_transformer import (
     AutoRegressiveTransformerAgent,
@@ -31,7 +31,7 @@ from jaxrl_m.agents.continuous.auto_regressive_transformer import (
 from jaxrl_m.agents.continuous.base_policy import BasePolicy, BasePolicyTypes
 from jaxrl_m.agents.continuous.ddpm_bc import DDPMBCAgent
 from jaxrl_m.agents.continuous.openvla import OpenVLAAgent
-from jaxrl_m.common.common import shard_batch
+from jaxrl_m.common.common import JaxRLTrainState, shard_batch
 from jaxrl_m.common.evaluation import evaluate_with_trajectories_vectorized, supply_rng
 from jaxrl_m.common.traj import TrajSampler, calc_return_to_go
 from jaxrl_m.common.typing import Batch, Data
@@ -144,7 +144,7 @@ def add_empty_observation_history_axis_to_batch(batch: Batch) -> Batch:
     """
     for key in ["observations", "next_observations", "actions"]:
         # First dimension is batch size, second dimension is chunking dimension
-        batch[key] = jax.tree.map(lambda x: x[:, None], batch[key])
+        batch[key] = jax.tree_map(lambda x: x[:, None], batch[key])
     return batch
 
 
@@ -159,7 +159,7 @@ def unbatch_observation_history_axis(batch: Batch) -> Batch:
         Batch without observation history axis.
     """
     for key in ["observations", "next_observations", "actions"]:
-        batch[key] = jax.tree.map(lambda x: x[:, 0], batch[key])
+        batch[key] = jax.tree_map(lambda x: x[:, 0], batch[key])
     return batch
 
 
@@ -249,16 +249,18 @@ def preprocess_batch_with_action_optimization(
     else:
         if isinstance(observations, dict) and "ddpm_actions" in observations:
             observations = observations["state"]
-        local_optimization_results: LocalOptimizationState = local_optimization_steps(
-            observations,
-            batch["actions"],
-            critic=critic_agent,
-            critic_state=critic_agent.state,
-            max_num_steps=local_optimization_steps,
-            step_size=local_optimization_step_size,
-            optimize_critic_ensemble_min=optimize_critic_ensemble_min,
-            action_space_low=action_space_low,
-            action_space_high=action_space_high,
+        local_optimization_results: LocalOptimizationState = (
+            take_local_optimization_steps(
+                observations,
+                batch["actions"],
+                critic=critic_agent,
+                critic_state=critic_agent.state,
+                num_steps=local_optimization_steps,
+                step_size=local_optimization_step_size,
+                optimize_critic_ensemble_min=optimize_critic_ensemble_min,
+                action_space_low=action_space_low,
+                action_space_high=action_space_high,
+            )
         )
         batch["actions"] = local_optimization_results.actions
     batch = add_empty_observation_history_axis_to_batch(batch)
@@ -360,9 +362,9 @@ def get_policy_fn(
             # Get samples from the base policy, put them in the observation dict
 
             if obs_ndim == 2:
-                batched_observations = jax.tree.map(lambda x: x[:, None], observations)
+                batched_observations = jax.tree_map(lambda x: x[:, None], observations)
             elif obs_ndim == 1:
-                batched_observations = jax.tree.map(
+                batched_observations = jax.tree_map(
                     lambda x: x[None, None], observations
                 )
             observations["base_policy_actions"] = base_policy.sample_actions(
@@ -376,9 +378,9 @@ def get_policy_fn(
         if "ddpm" in FLAGS.config.agent:
 
             if obs_ndim == 2:
-                observations = jax.tree.map(lambda x: x[:, None], observations)
+                observations = jax.tree_map(lambda x: x[:, None], observations)
             elif obs_ndim == 1:
-                observations = jax.tree.map(lambda x: x[None, None], observations)
+                observations = jax.tree_map(lambda x: x[None, None], observations)
         actions = jax.device_get(
             agent.sample_actions(
                 observations, *args, **kwargs, argmax=argmax, timer=timer
@@ -414,6 +416,17 @@ def set_batch_masks(
 def resize_images_to_100x100(images):
     batch_size = images.shape[0]
     return jax.image.resize(images, (batch_size, 100, 100, 3), method="cubic")
+
+
+def restart_agent_optimizer_state(agent):
+    assert hasattr(agent, "state") and isinstance(agent.state, JaxRLTrainState)
+    agent.state = agent.state.replace(
+        opt_states=JaxRLTrainState._tx_tree_map(
+            lambda tx: tx.init(agent.state.params), agent.state.txs
+        ),
+        step=0,
+    )
+    return agent
 
 
 def plot_q_values_over_trajectory_time_step(
@@ -518,6 +531,7 @@ def train_agent(_):
 
     # Create environment and dataset
     action_space = None
+    offline_dataset_size = None
     if FLAGS.environment_name == "real_robot":
         assert FLAGS.reward_bias == -1.0
         assert FLAGS.reward_scale == 1.0
@@ -676,6 +690,7 @@ def train_agent(_):
         dataset.dataset_dict["actions"] = np.clip(
             dataset.dataset_dict["actions"], -FLAGS.clip_action, FLAGS.clip_action
         )
+        offline_dataset_size = len(dataset)
 
     if action_space is None:
         action_space = train_env.action_space
@@ -827,7 +842,7 @@ def train_agent(_):
     # The transformer agent handles this internally.
     # if not is_transformer_agent:
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    # agent = jax.device_put(jax.tree.map(jnp.array, agent), sharding.replicate())
+    # agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
     # agent = jax.device_put(agent, sharding.replicate())
     agent.to_device(sharding)
     if base_policy_agent is not None:
@@ -886,6 +901,7 @@ def train_agent(_):
             num_trajectories_to_collect = FLAGS.num_online_trajectories_per_epoch
             if i == FLAGS.num_offline_epochs:
                 logging.info("Switching to online training...")
+                agent = restart_agent_optimizer_state(agent)
                 data_collection_rng_key, rng = jax.random.split(rng)
                 env_data_collection_policy_fn = get_policy_fn(
                     agent=agent,
@@ -901,12 +917,6 @@ def train_agent(_):
                         FLAGS.config.agent_kwargs.batch_size * FLAGS.config.mixing_ratio
                     )
                 )
-                offline_train_iterator_for_base_policy = dataset.iterator(
-                    batch_size=int(
-                        FLAGS.config.base_policy_agent_kwargs.batch_size
-                        * FLAGS.config.mixing_ratio
-                    )
-                )
                 if not FLAGS.config.image_observations:
                     online_train_iterator_for_critic = state_replay_buffer.iterator(
                         batch_size=FLAGS.config.batch_size
@@ -915,15 +925,14 @@ def train_agent(_):
                             * FLAGS.config.mixing_ratio
                         )
                     )
-                    online_train_iterator_for_base_policy = (
-                        state_replay_buffer.iterator(
+                    if offline_dataset_size is None:
+                        online_train_iterator_for_base_policy = state_replay_buffer.iterator(
                             batch_size=FLAGS.config.base_policy_agent_kwargs.batch_size
                             - int(
                                 FLAGS.config.base_policy_agent_kwargs.batch_size
                                 * FLAGS.config.mixing_ratio
                             )
                         )
-                    )
 
                 num_trajectories_to_collect = FLAGS.num_warmup_trajectories
 
@@ -1013,6 +1022,24 @@ def train_agent(_):
             and i >= FLAGS.num_offline_epochs
             and FLAGS.num_online_epochs > 0
         ):
+            if offline_dataset_size is not None:
+                # The ratio of offline to online data changes after every epoch, so we need to
+                # update the iterator.
+                total_data_size = offline_dataset_size + online_env_steps
+                offline_train_iterator_for_base_policy = dataset.iterator(
+                    batch_size=int(
+                        (offline_dataset_size / total_data_size)
+                        * FLAGS.config.base_policy_agent_kwargs.batch_size
+                    )
+                )
+
+                online_train_iterator_for_base_policy = state_replay_buffer.iterator(
+                    batch_size=FLAGS.config.base_policy_agent_kwargs.batch_size
+                    - int(
+                        (offline_dataset_size / total_data_size)
+                        * FLAGS.config.base_policy_agent_kwargs.batch_size
+                    )
+                )
             num_base_policy_distillation_steps = int(
                 online_env_steps_this_epoch * FLAGS.base_policy_utd
             )
@@ -1027,7 +1054,6 @@ def train_agent(_):
             ):
                 timer.tick("base_policy_distillation/get_batch")
                 if FLAGS.config.mixing_ratio > 0:
-                    offline_batch = None
                     offline_batch = next(offline_train_iterator_for_base_policy)
                 else:
                     offline_batch = None
@@ -1278,17 +1304,17 @@ def train_agent(_):
                 if hasattr(agent, "forward_critic"):
                     timer.tick("q-mc calculation")
                     initial_states = [t["observation"][0] for t in trajectories]
-                    initial_states = jax.tree.map(
+                    initial_states = jax.tree_map(
                         lambda *x: jnp.stack(x), *initial_states
                     )
                     initial_actions = [t["action"][0] for t in trajectories]
-                    initial_actions = jax.tree.map(
+                    initial_actions = jax.tree_map(
                         lambda *x: jnp.stack(x), *initial_actions
                     )
                     initial_qs = agent.forward_critic(
                         initial_states, initial_actions, rng=None, train=False
                     ).mean(axis=0)
-                    mc_returns = jax.tree.map(
+                    mc_returns = jax.tree_map(
                         lambda t: calc_return_to_go(
                             rewards=np.array(t["reward"]) * FLAGS.reward_scale
                             + FLAGS.reward_bias,
@@ -1303,7 +1329,7 @@ def train_agent(_):
                             x, dict
                         ),  # only map over traj in trajs
                     )
-                    initial_mc_returns = jax.tree.map(lambda t: t[0], mc_returns)
+                    initial_mc_returns = jax.tree_map(lambda t: t[0], mc_returns)
 
                     timer.tock("q-mc calculation")
                     timer.tick("q_values_over_trajectory")
@@ -1441,7 +1467,9 @@ def train_agent(_):
             )
             wandb_logger.log({"timer/average_times": timer.get_average_times()}, step=i)
 
-        if FLAGS.train_on_separate_computer_mode != "single_computer":
+        if FLAGS.train_on_separate_computer_mode == "single_computer":
+            online_env_steps_this_epoch = 0
+        else:
             # Wait until peer is done with their part.
             if FLAGS.train_on_separate_computer_mode == "env_steps_only":
                 # Save steps_elapsed to a file.
