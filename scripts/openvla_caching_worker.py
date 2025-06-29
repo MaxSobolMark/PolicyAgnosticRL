@@ -82,7 +82,7 @@ def openvla_caching_worker(
     action_std = [action_std] * 7
     assert checkpoints_dir.endswith("base_policy_checkpoints_from_agent_trainer")
 
-    openvla_agent = OpenVLAAgent.create(
+    openvla_agent = OpenVLAAgent(
         action_std=action_std,
         instruction=instruction,
     )
@@ -141,7 +141,7 @@ def openvla_caching_worker(
                 print(
                     f"Worker {worker_id} is loading checkpoint {current_checkpoint_index}"
                 )
-                openvla_agent.load_checkpoint(
+                openvla_agent.restore_checkpoint(
                     os.path.join(
                         checkpoints_dir, f"checkpoint_{current_checkpoint_index}"
                     )
