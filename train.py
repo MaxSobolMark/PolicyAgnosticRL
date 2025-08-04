@@ -434,42 +434,63 @@ def restart_agent_optimizer_state(agent):
     return agent
 
 
+def _pad_to_multiple_of_devices(x: jnp.ndarray, num_devices: int):
+    n = x.shape[0]
+    pad = (-n) % num_devices
+    if pad:
+        pad_shape = (pad, *x.shape[1:])  # pad only the first dimension
+        x = jnp.concatenate(
+            [x, jnp.zeros(pad_shape, dtype=x.dtype)], axis=0
+        )
+    return x, n
+
+
 def plot_q_values_over_trajectory_time_step(
     trajectories: List[Dict[str, List[Union[np.ndarray, Dict[str, np.ndarray]]]]],
     critic_agent,
     sharding: jax.sharding.Sharding,
 ):
     trajectories = [trajectories[0]]  # only plot the first trajectory
+    num_devices = len(jax.local_devices())
+
     if isinstance(trajectories[0]["observation"][0], dict):
-        observations = [
-            {
-                key: np.array([obs[key] for obs in trajectory["observation"]])
-                for key in trajectory["observation"][0].keys()
-            }
-            for trajectory in trajectories
-        ]
+        obs_np = {
+            key: np.array([obs[key] for obs in trajectory["observation"]])
+            for key in trajectory["observation"][0].keys()
+        }
+        obs_padded = {}
+        orig_len = None
+        for k, v in obs_np.items():
+            v_jnp = jnp.array(v)
+            v_pad, n0 = _pad_to_multiple_of_devices(v_jnp, num_devices)
+            obs_padded[k] = v_pad
+            if orig_len is None:
+                orig_len = n0
+            else:
+                assert orig_len == n0, f"Observation fields have different lengths: {orig_len} vs {n0}"
+        observations = shard_batch(obs_padded, sharding)
     else:
-        observations = [
-            shard_batch(jnp.array(trajectory["observation"]), sharding)
-            for trajectory in trajectories
-        ]
+        obs_np = np.array(trajectories[0]["observation"])  # (T, obs_dim)
+        obs_jnp = jnp.array(obs_np)
+        observations, orig_len = _pad_to_multiple_of_devices(obs_jnp, num_devices)
+        observations = shard_batch(observations, sharding)
 
-    actions = [
-        shard_batch(jnp.array(trajectory["action"]), sharding)
-        for trajectory in trajectories
-    ]
+    act_np = np.array(trajectories[0]["action"])  # (T, act_dim)
+    act_jnp = jnp.array(act_np)
+    actions, _ = _pad_to_multiple_of_devices(act_jnp, num_devices)
+    actions = shard_batch(actions, sharding)
 
-    q_values = []
-    for trajectory_index in range(len(trajectories)):
-        q_values.append(
-            critic_agent.forward_critic(
-                observations[trajectory_index],
-                actions[trajectory_index],
-                jax.random.PRNGKey(0),
-            ).mean(axis=0)
-        )
-    q_values = jnp.stack(q_values, axis=0).mean(axis=0)
-    assert q_values.shape == (len(trajectories[0]["observation"]),)
+    q_values_padded = critic_agent.forward_critic(
+        observations,
+        actions,
+        jax.random.PRNGKey(0),
+    ).mean(axis=0)  # (T_padded,)
+
+    q_values = q_values_padded[:orig_len]
+    assert q_values.shape == (len(trajectories[0]["observation"]),), (
+        q_values.shape,
+        len(trajectories[0]["observation"]),
+    )
 
     # Plot the q-values over the trajectory time step using seaborn, make it look nice
     sns.set(style="whitegrid")
