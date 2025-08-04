@@ -122,6 +122,11 @@ flags.DEFINE_string(
     None,
     "Path to pre-computed base policy actions to use for pre-training.",
 )
+flags.DEFINE_bool(
+    "plot_q_values_over_trajectory_figure",
+    False,
+    "Plot Q-values over trajectory time step.",
+)
 
 BASE_POLICY_TYPE_TO_CLASS = {
     BasePolicyTypes.OpenVLA: OpenVLAAgent,
@@ -1332,14 +1337,17 @@ def train_agent(_):
                     initial_mc_returns = jax.tree_map(lambda t: t[0], mc_returns)
 
                     timer.tock("q-mc calculation")
-                    timer.tick("q_values_over_trajectory")
-                    q_values_over_trajectory_time_step_figure = (
-                        plot_q_values_over_trajectory_time_step(
-                            trajectories=trajectories,
-                            critic_agent=agent,
-                            sharding=sharding,
+                    if FLAGS.plot_q_values_over_trajectory_figure:
+                        timer.tick("q_values_over_trajectory")
+                        q_values_over_trajectory_time_step_figure = (
+                            plot_q_values_over_trajectory_time_step(
+                                trajectories=trajectories,
+                                critic_agent=agent,
+                                sharding=sharding,
+                            )
                         )
-                    )
+                    else:
+                        q_values_over_trajectory_time_step_figure = None
                     timer.tock("q_values_over_trajectory")
                     wandb.log(
                         {
